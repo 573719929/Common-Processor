@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding : utsf8 -*-
+DEFAULT_HOST, DEFAULT_PORT = "localhost", 37100
 import sys, json
 sys.path.append('./gen-py')
 from DataAccess import QueryProcessorService
@@ -13,11 +14,11 @@ from hbase.ttypes import *
 
  
 try:
-    transport = TTransport.TBufferedTransport(TSocket.TSocket('localhost', 37100))
+    transport = TTransport.TBufferedTransport(TSocket.TSocket(DEFAULT_HOST, DEFAULT_PORT))
     client = QueryProcessorService.Client(TBinaryProtocol.TBinaryProtocol(transport))
     
     transport.open()
-    print client.Process(json.dumps(""))
+    print client.Process(json.dumps({'a':1, 'b':2}))
     transport.close()
  
 except Thrift.TException, ex:

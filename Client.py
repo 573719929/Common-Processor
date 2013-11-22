@@ -18,7 +18,16 @@ try:
     client = QueryProcessorService.Client(TBinaryProtocol.TBinaryProtocol(transport))
     
     transport.open()
-    print client.Process(json.dumps({'a':1, 'b':2}))
+    for i in json.loads(client.Process(json.dumps({
+        'type' : 'abc',
+        'version' : '1.0',
+        'parameters' : {
+            'area' : '20',
+            'channel' : ['1000', '2000', '3000'],
+            'dayslot' : ['20130913', '20130916'],
+            'timeslot' : ['082700', '082799'],
+        },
+    })))['Result']['data']: print i
     transport.close()
  
 except Thrift.TException, ex:

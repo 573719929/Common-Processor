@@ -1,22 +1,27 @@
 #!/usr/bin/env python
-# -*- coding : utsf8 -*-
-DEFAULT_HOST, DEFAULT_PORT = None, 37100
+#-*- coding:utf-8 -*-
+DEFAULT_HOST, DEFAULT_PORT = None, 7729
 import sys, json, random, traceback
 sys.path.append('./gen-py')
 from DataAccess import QueryProcessorService
-from thrift.transport import TSocket
-from thrift.transport import TTransport
+from thrift.transport import TSocket, TTransport
 from thrift.protocol import TBinaryProtocol
 from thrift.server import TServer
 from hbase import Hbase
 from hbase.ttypes import *
 def Main(host, port): TServer.TSimpleServer(QueryProcessorService.Processor(Worker()), TSocket.TServerSocket(None if host == None or host == '' else str(host), int(port)), TTransport.TBufferedTransportFactory(), TBinaryProtocol.TBinaryProtocolFactory()).serve()
-class Record:
-    def __init__(self, d): self.d = dict(d)
-    def v(self, k): return self.d[k] if k in self.d else None
-    def __del__(self): del self.d
-    def __str__(self): return str(self.d)
-    def JSON(self): return self.d
+
+def ConditionToFilter(condition):
+    ef = []
+    for field in condition:
+        if field == 'timeslot': ef.append(OR(AND(GT('CF', 'start', condition['timeslot'][0]), LT('CF', 'start', condition['timeslot'][1])), AND(GT('CF', 'end', condition['timeslot'][0]), LT('CF', 'end', condition['timeslot'][1]))))
+        elif field == 'dayslot': ef.append(AND(GT('CF', 'day', condition['dayslot'][0]), LT('CF', 'day', condition['dayslot'][1])))
+        elif field == 'subject': pass
+        elif isinstance(condition[field], list) or isinstance(condition[field], tuple): ef.append(OR(*[EQ('CF', field, i) for i in condition[field]]))
+        else: ef.append(EQ('CF', field, str(condition[field])))
+    return None if len(ef) == 0 else AND(*ef)
+class Record(dict):
+    def v(self, k): return self[k] if k in self else None
 class DataGrid:
     def __init__(self): pass
     def __iter__(self): return self.next()
@@ -24,69 +29,58 @@ class DataGrid:
 class BasicDataGrid(DataGrid):
     def __init__(self, data): self.data = data
     def __iter__(self): return iter(self.data)
-class TestSourceData(DataGrid):
+class BOOL:
+    def __init__(self): pass
+    def __del__(self): pass
+    def __str__(self): return None
+class AND(BOOL):
+    def __init__(self, *args): self.args = args
+    def __str__(self): return '('+' AND '.join([str(i) for i in self.args])+')'
+class OR(BOOL):
+    def __init__(self, *args): self.args = args
+    def __str__(self): return '('+' OR '.join([str(i) for i in self.args])+')'
+class GT(BOOL):
+    def __init__(self, cf, qf, value): self.cf, self.qf, self.value = cf, qf, value
+    def __str__(self): return "SingleColumnValueFilter ('%s', '%s', >, 'binary:%s')"%(self.cf, self.qf, self.value)
+class LT(BOOL):
+    def __init__(self, cf, qf, value): self.cf, self.qf, self.value = cf, qf, value
+    def __str__(self): return "SingleColumnValueFilter ('%s', '%s', <, 'binary:%s')"%(self.cf, self.qf, self.value)
+class GTE(BOOL):
+    def __init__(self, cf, qf, value): self.cf, self.qf, self.value = cf, qf, value
+    def __str__(self): return "SingleColumnValueFilter ('%s', '%s', >=, 'binary:%s')"%(self.cf, self.qf, self.value)
+class LTE(BOOL):
+    def __init__(self, cf, qf, value): self.cf, self.qf, self.value = cf, qf, value
+    def __str__(self): return "SingleColumnValueFilter ('%s', '%s', <=, 'binary:%s')"%(self.cf, self.qf, self.value)
+class EQ(BOOL):
+    def __init__(self, cf, qf, value): self.cf, self.qf, self.value = cf, qf, value
+    def __str__(self): return "SingleColumnValueFilter ('%s', '%s', =, 'binary:%s')"%(self.cf, self.qf, self.value)
+class NEQ(BOOL):
+    def __init__(self, cf, qf, value): self.cf, self.qf, self.value = cf, qf, value
+    def __str__(self): return "SingleColumnValueFilter ('%s', '%s', !=, 'binary:%s')"%(self.cf, self.qf, self.value)
+class IN(BOOL):
+    def __init__(self, a, b, c): self.a, self.b, self.c = a, b, c
+    def __str__(self): return '('+' OR '.join([str(EQ(self.a, self.b, i)) for i in self.args])+')'
+class HBaseReader(DataGrid):
+    def __init__(self, Host, Port, Table, RowKeyPattern, Filter): self.Host, self.Port, self.Table, self.RowKeyPattern, self.Filter = str(Host), int(Port), Table, RowKeyPattern, Filter
     def next(self):
-        yield Record({'start' : '234247', 'rate': 0.588, 'rate000': 0.47658, 'channel': 102, 'area': 1, 'date': 20111120, 'length': 102, 'market': 0.0})
-        yield Record({'start' : '234243', 'rate': 0.952, 'rate000': 0.32376, 'channel': 102, 'area': 3, 'date': 20111117, 'length': 68, 'market': 0.26448})
-        yield Record({'start' : '001200', 'rate': 0.758, 'rate000': 1.9469, 'channel': 108, 'area': 5, 'date': 20111117, 'length': 178, 'market': 0.97197068})
-        yield Record({'start' : '001200', 'rate': 0.867, 'rate000': 0.29484, 'channel': 110, 'area': 1, 'date': 20111120, 'length': 73, 'market': 0.8012829})
-        yield Record({'start' : '001200', 'rate': 0.948, 'rate000': 0.1884, 'channel': 110, 'area': 3, 'date': 20111120, 'length': 83, 'market': 0.63755})
-        yield Record({'start' : '001200', 'rate': 0.347, 'rate000': 4.6448, 'channel': 107, 'area': 3, 'date': 20111120, 'length': 40, 'market': 0.311521})
-        yield Record({'start' : '345345', 'rate': 0.00531, 'rate000': 0.14311, 'channel': 106, 'area': 1, 'date': 20111119, 'length': 110, 'market': 0.76})
-        yield Record({'start' : '001200', 'rate': 0.654, 'rate000': 0.60679, 'channel': 108, 'area': 1, 'date': 20111119, 'length': 21, 'market': 0.59139456})
-        yield Record({'start' : '001200', 'rate': 0.827, 'rate000': 3.4546, 'channel': 106, 'area': 1, 'date': 20111119, 'length': 30, 'market': 0.69695})
-        yield Record({'start' : '001200', 'rate': 0.0517, 'rate000': 0.62187, 'channel': 102, 'area': 5, 'date': 20111121, 'length': 147, 'market': 0.56})
-        yield Record({'start' : '756735', 'rate': 0.715, 'rate000': 6.099, 'channel': 110, 'area': 3, 'date': 20111118, 'length': 119, 'market': 0.02340277})
-        yield Record({'start' : '001200', 'rate': 0.73, 'rate000': 1.0779, 'channel': 102, 'area': 1, 'date': 20111119, 'length': 82, 'market': 0.86546136})
-        yield Record({'start' : '001200', 'rate': 0.835, 'rate000': 1.5658, 'channel': 107, 'area': 3, 'date': 20111117, 'length': 200, 'market': 0.1655})
-        yield Record({'start' : '234247', 'rate': 0.431, 'rate000': 1.6849, 'channel': 106, 'area': 5, 'date': 20111118, 'length': 24, 'market': 0.894782})
-        yield Record({'start' : '001200', 'rate': 0.564, 'rate000': 6.428, 'channel': 102, 'area': 3, 'date': 20111120, 'length': 33, 'market': 0.8022249})
-        yield Record({'start' : '001200', 'rate': 0.0606, 'rate000': 7.8873, 'channel': 106, 'area': 3, 'date': 20111121, 'length': 42, 'market': 0.2595468})
-        yield Record({'start' : '001200', 'rate': 0.523, 'rate000': 8.9123, 'channel': 106, 'area': 1, 'date': 20111121, 'length': 156, 'market': 0.6883453})
-        yield Record({'start' : '001200', 'rate': 0.765, 'rate000': 0.044051, 'channel': 106, 'area': 3, 'date': 20111118, 'length': 11, 'market': 0.43724})
-        yield Record({'start' : '001200', 'rate': 0.0238, 'rate000': 3.8409, 'channel': 110, 'area': 5, 'date': 20111120, 'length': 46, 'market': 0.73827705})
-        yield Record({'start' : '001200', 'rate': 0.562, 'rate000': 0.82476, 'channel': 102, 'area': 1, 'date': 20111118, 'length': 74, 'market': 0.1932})
-        yield Record({'start' : '001200', 'rate': 0.447, 'rate000': 4.7711, 'channel': 107, 'area': 1, 'date': 20111120, 'length': 188, 'market': 0.215904694})
-        yield Record({'start' : '001200', 'rate': 0.997, 'rate000': 0.22331, 'channel': 107, 'area': 3, 'date': 20111121, 'length': 159, 'market': 0.582725})
-        yield Record({'start' : '001200', 'rate': 0.147, 'rate000': 6.5493, 'channel': 102, 'area': 5, 'date': 20111117, 'length': 84, 'market': 0.54071497})
-        yield Record({'start' : '001200', 'rate': 0.226, 'rate000': 1.0678, 'channel': 110, 'area': 1, 'date': 20111117, 'length': 96, 'market': 0.62115933})
-        yield Record({'start' : '001200', 'rate': 0.173, 'rate000': 4.2589, 'channel': 108, 'area': 1, 'date': 20111117, 'length': 109, 'market': 0.77639889})
-        yield Record({'start' : '001200', 'rate': 0.388, 'rate000': 4.735, 'channel': 106, 'area': 1, 'date': 20111121, 'length': 134, 'market': 0.60228487})
-        yield Record({'start' : '001200', 'rate': 0.869, 'rate000': 3.4194, 'channel': 108, 'area': 1, 'date': 20111120, 'length': 178, 'market': 0.1776002})
-        yield Record({'start' : '001200', 'rate': 0.284, 'rate000': 1.3945, 'channel': 107, 'area': 1, 'date': 20111119, 'length': 88, 'market': 0.9283678})
-        yield Record({'start' : '001200', 'rate': 0.279, 'rate000': 2.4186, 'channel': 106, 'area': 1, 'date': 20111118, 'length': 89, 'market': 0.1726923})
-        yield Record({'start' : '234247', 'rate': 0.669, 'rate000': 1.3355, 'channel': 106, 'area': 5, 'date': 20111117, 'length': 23, 'market': 0.6547277})
-        yield Record({'start' : '001200', 'rate': 0.544, 'rate000': 5.8991, 'channel': 107, 'area': 1, 'date': 20111120, 'length': 200, 'market': 0.4079244})
-        yield Record({'start' : '001200', 'rate': 0.414, 'rate000': 7.8017, 'channel': 108, 'area': 5, 'date': 20111118, 'length': 142, 'market': 0.2624028})
-        yield Record({'start' : '001200', 'rate': 0.421, 'rate000': 0.918, 'channel': 102, 'area': 5, 'date': 20111118, 'length': 28, 'market': 0.51881})
-        yield Record({'start' : '001200', 'rate': 0.794, 'rate000': 2.0751, 'channel': 107, 'area': 3, 'date': 20111120, 'length': 40, 'market': 0.16973})
-        yield Record({'start' : '001200', 'rate': 0.639, 'rate000': 7.9218, 'channel': 107, 'area': 1, 'date': 20111120, 'length': 64, 'market': 0.61352})
-        yield Record({'start' : '001200', 'rate': 0.311, 'rate000': 3.6826, 'channel': 106, 'area': 5, 'date': 20111119, 'length': 103, 'market': 0.85763})
-        yield Record({'start' : '001200', 'rate': 0.153, 'rate000': 5.598, 'channel': 107, 'area': 1, 'date': 20111121, 'length': 33, 'market': 0.45737})
-        yield Record({'start' : '123123', 'rate': 0.628, 'rate000': 0.1818, 'channel': 108, 'area': 5, 'date': 20111118, 'length': 75, 'market': 0.23009})
-        yield Record({'start' : '001200', 'rate': 0.247, 'rate000': 2.6869, 'channel': 106, 'area': 1, 'date': 20111120, 'length': 137, 'market': 0.97654})
-        yield Record({'start' : '001200', 'rate': 0.86, 'rate000': 1.5401, 'channel': 106, 'area': 5, 'date': 20111121, 'length': 81, 'market': 0.5404565971})
-        yield Record({'start' : '001200', 'rate': 0.931, 'rate000': 0.9819, 'channel': 110, 'area': 5, 'date': 20111120, 'length': 196, 'market': 0.760582})
-        yield Record({'start' : '001200', 'rate': 0.0114, 'rate000': 1.4758, 'channel': 102, 'area': 5, 'date': 20111119, 'length': 85, 'market': 0.565402})
-        yield Record({'start' : '001200', 'rate': 0.611, 'rate000': 1.8474, 'channel': 106, 'area': 5, 'date': 20111117, 'length': 110, 'market': 0.756885})
-        yield Record({'start' : '001200', 'rate': 0.997, 'rate000': 1.9782, 'channel': 107, 'area': 3, 'date': 20111120, 'length': 35, 'market': 0.944514})
-        yield Record({'start' : '001200', 'rate': 0.155, 'rate000': 4.8891, 'channel': 106, 'area': 3, 'date': 20111119, 'length': 182, 'market': 0.704212})
-        yield Record({'start' : '001200', 'rate': 0.993, 'rate000': 8.6424, 'channel': 110, 'area': 5, 'date': 20111121, 'length': 94, 'market': 0.988477})
-        yield Record({'start' : '001200', 'rate': 0.256, 'rate000': 4.0653, 'channel': 102, 'area': 5, 'date': 20111119, 'length': 122, 'market': 0.587296})
-        yield Record({'start' : '234247', 'rate': 0.715, 'rate000': 2.0196, 'channel': 110, 'area': 5, 'date': 20111121, 'length': 32, 'market': 0.619468})
-        yield Record({'start' : '001200', 'rate': 0.907, 'rate000': 1.8547, 'channel': 107, 'area': 3, 'date': 20111118, 'length': 43, 'market': 0.208099})
-        yield Record({'start' : '001200', 'rate': 0.842, 'rate000': 4.3236, 'channel': 106, 'area': 3, 'date': 20111119, 'length': 95, 'market': 0.833692})
+        transport = TTransport.TBufferedTransport(TSocket.TSocket(self.Host, self.Port))
+        client = Hbase.Client(TBinaryProtocol.TBinaryProtocol(transport))
+        transport.open()
+        scan = TScan(filterString = str(self.Filter) if self.Filter != None else None)
+        id = client.scannerOpenWithScan(self.Table, scan, None)
+        result = client.scannerGet(id)
+        while result:
+            yield Record(dict([(q, result[0].columns[q].value) for q in result[0].columns]))
+            result = client.scannerGet(id)
         raise StopIteration
+def FLOAT(f):
+    try: return float(f)
+    except: return 0.0
 class Unpackage(DataGrid):
     def __init__(self, Groupby, separator, data): self.f, self.sep, self.data = list(Groupby), separator, data
     def __del__(self): del self.f, self.sep, self.data
     def next(self):
-        r = {}
-        for k in self.data:
-            r.clear()
-            for i in self.data[k]: r[i] = self.data[k][i].GetResult()
-            yield Record(r)
-        raise StopIteration
+        for k in self.data: yield Record(dict([(i, self.data[k][i].GetResult()) for i in self.data[k]]))
 class Boolean:
     def bool(self, record): return True
 class Operator:
@@ -104,7 +98,7 @@ class SUM(Operator):
     def __init__(self, node): self.node, self.data = Field(node) if isinstance(node, str) else node, 0
     def emit(self, record):
         self.node.emit(record)
-        self.data += float(self.node.GetResult())
+        self.data += FLOAT(self.node.GetResult())
     def Clone(self): return SUM(self.node.Clone())
 class COUNT(Operator):
     def __init__(self, node): self.node, self.data = Field(node) if isinstance(node, str) else node, 0
@@ -116,83 +110,168 @@ class AVG(Operator):
     def __init__(self, node): self.node, self.sum, self.count = Field(node) if isinstance(node, str) else node, 0, 0
     def emit(self, record):
         self.node.emit(record)
-        self.sum, self.count = self.sum + float(self.node.GetValue(record)), self.count + 1
+        self.sum, self.count = self.sum + FLOAT(self.node.GetValue(record)), self.count + 1
     def GetResult(self): return self.sum/self.count
     def Clone(self): return AVG(self.node.Clone())
 class MUL(Operator):
     def __init__(self, node1, node2): self.nodes, self.data = [Field(node1) if isinstance(node1, str) else node1, Field(node2) if isinstance(node2, str) else node2], 0
-    def emit(self, record):
-        for i in self.nodes: i.emit(record)
-    def GetResult(self): return float(self.nodes[0].GetResult()) * float(self.nodes[1].GetResult())
+    def emit(self, record): map(lambda x: x.emit(record), self.nodes)
+    def GetResult(self): return FLOAT(self.nodes[0].GetResult()) * FLOAT(self.nodes[1].GetResult())
     def Clone(self): return MUL(self.nodes[0].Clone(), self.nodes[1].Clone())
+class BIGGER(Operator):
+    def __init__(self, node1, node2): self.node1, self.node2 = Field(node1) if isinstance(node1, str) else node1, Field(node2) if isinstance(node2, str) else node2
+    def emit(self, record):
+        self.node1.emit(record)
+        self.node2.emit(record)
+    def GetResult(self):
+        l, r = FLOAT(self.node1.GetResult()), FLOAT(self.node2.GetResult())
+        return l if l > r else r
+    def Clone(self): return BIGGER(self.node1.Clone(), self.node2.Clone())
+class SMALLER(Operator):
+    def __init__(self, node1, node2): self.node1, self.node2 = Field(node1) if isinstance(node1, str) else node1, Field(node2) if isinstance(node2, str) else node2
+    def emit(self, record):
+        self.node1.emit(record)
+        self.node2.emit(record)
+    def GetResult(self):
+        l, r = FLOAT(self.node1.GetResult()), FLOAT(self.node2.GetResult())
+        return l if l < r else r
+    def Clone(self): return SMALLER(self.node1.Clone(), self.node2.Clone())
+class NUMBER(Operator):
+    def __init__(self, value): self.value = FLOAT(value)
+    def GetResult(self): return self.value
+    def Clone(self): return NUMBER(self.value)
 class DIV(Operator):
     def __init__(self, node1, node2): self.nodes, self.data = [Field(node1) if isinstance(node1, str) else node1, Field(node2) if isinstance(node2, str) else node2], 0
-    def emit(self, record):
-        for i in self.nodes: i.emit(record)
-    def GetResult(self): return float(self.nodes[0].GetResult()) / float(self.nodes[1].GetResult())
+    def emit(self, record): map(lambda x: x.emit(record), self.nodes)
+    def GetResult(self): return FLOAT(self.nodes[0].GetResult()) / FLOAT(self.nodes[1].GetResult())
     def Clone(self): return DIV(self.nodes[0].Clone(), self.nodes[1].Clone())
-class ADD(Operator):
-    def __init__(self, node1, node2): self.nodes, self.data = [Field(node1) if isinstance(node1, str) else node1, Field(node2) if isinstance(node2, str) else node2], 0
-    def emit(self, record):
-        for i in self.nodes: i.emit(record)
-    def GetResult(self): return float(self.nodes[0].GetResult()) + float(self.nodes[1].GetResult())
-    def Clone(self): return ADD(self.nodes[0].Clone(), self.nodes[1].Clone())
-class PLU(Operator):
-    def __init__(self, node1, node2): self.nodes, self.data = [Field(node1) if isinstance(node1, str) else node1, Field(node2) if isinstance(node2, str) else node2], 0
-    def emit(self, record):
-        for i in self.nodes: i.emit(record)
-    def GetResult(self): return float(self.nodes[0].GetResult()) - float(self.nodes[1].GetResult())
-    def Clone(self): return PLU(self.nodes[0].Clone(), self.nodes[1].Clone())
 class Worker:
-    def GROUP(self, Select = {}, From = TestSourceData(), Where = Boolean(), Groupby = [], Having = Boolean(), Sortby = [], Skip = 0, Limit = 10):
+    def __init__(self):
+        self.function = {
+            'DayReport' : lambda x: self.DayReport(x),
+            'AreaReport' : lambda x: self.AreaReport(x),
+            'RenqunReport' : lambda x: self.RenqunReport(x),
+            'Detail' : lambda x: self.Detail(x),
+            'Summary' : lambda x: self.Summary(x),
+        }
+    def GROUP(self, Select = {}, From = None, Where = Boolean(), Groupby = [], Having = Boolean(), Sortby = [], Skip = 0, Limit = 10):
         data = {}
-        if Groupby != None:
-            db = []
+        if From != None and Groupby != None:
             for record in From:
                 if not Where.bool(record): continue
                 key = ','.join([str(record.v(i)) for i in Groupby])
-                if key not in data:
-                    data[key] = {}
-                    for s in Select: data[key][s] = Field(Select[s]) if isinstance(Select[s], str) else Select[s].Clone()
+                if key not in data: data[key] = dict([(s, Field(Select[s]) if isinstance(Select[s], str) else Select[s].Clone()) for s in Select])
                 for k in data[key]: data[key][k].emit(record)
             for result in Unpackage(Groupby, ",", data):
-                if not Having.bool(result): continue
-                yield result
-        else:
-            r, S, re = {}, {}, None
-            for s in Select: S[s] = Field(Select[s]) if isinstance(Select[s], str) else Select[s].Clone()
-            db = []
+                if Having.bool(result): yield result
+        elif From != None:
+            S = dict([(s, Field(Select[s]) if isinstance(Select[s], str) else Select[s].Clone()) for s in Select])
             for record in From:
                 if not Where.bool(record): continue
-                r.clear()
-                for s in S: r[s] = S[s].GetValue(record)
-                re = Record(r)
-                if not Having.bool(re): continue
-                yield re
+                re = Record(dict([(s, S[s].GetValue(record)) for s in S]))
+                if Having.bool(re): yield re
         raise StopIteration
-    def JOIN(self, Select = {}, Left = TestSourceData(), Right = TestSourceData(), On = Boolean(), Where = Boolean(), Sortby = [], Skip = 0, Limit = 10): raise StopInteration
-    def _parse(self, input):
-        # Read parameters from input, here are some test cases.
+    def DayReport(self, parameters):
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(parameters))
         Select = {
-            'AREA' : 'area',
-            'CHANNEL' : 'channel',
-            'date' : 'date',
-            'COUNT' : COUNT('area'),
-            'SUM' : SUM('length'),
-            'AVG' : AVG('start'),
-            'RATE' : DIV(SUM(MUL('rate', 'length')), SUM('length')),
-            'RATE000' : DIV(SUM(MUL('rate000', 'length')), SUM('length')),
-            'MARKET' : DIV(SUM(MUL('market', 'length')), SUM('length')),
+            'DATE' : 'CF:date',
+            'COUNT' : COUNT('CF:area'),
+            'SUM' : SUM('CF:length'),
+            'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')),
+            'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')),
+            'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
         }
-        From = TestSourceData()
-        Groupby = [ 'area', 'channel', 'date', ]
-        Sortby, Skip, Limit = [], 0, 10 # should be implent
-        Where, Having = Boolean(), Boolean() # not implement
-        c = self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit)
-        return list(c)
+        Groupby =  ['CF:date',]
+        Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
+        return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
+    def Detail(self, paramters):
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        Select = {
+            'RQ' : 'CF:rq',
+            'AREA' : 'CF:area',
+            'NAME' : 'CF:name',
+            'PAGE' : 'CF:page',
+            'TITLE' : 'CF:title',
+            'CHANNEL' : 'CF:channel',
+            'DATE' : 'CF:date',
+            'WEEKDAY' : 'CF:weekday',
+            'START' : 'CF:start',
+            'LENGTH' : 'CF:length',
+            'END' : 'CF:end',
+            'TOPIC' : 'CF:topic',
+            'REPLAY' : 'CF:replay',
+            'RATE' : 'CF:rate',
+            'RATE000' : 'CF:rate000',
+            'MARKET' : 'CF:market',
+            'SERIALNO' : 'CF:serialno',
+        }
+        Groupby =  None
+        Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
+        return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
+    def Summary(self, paramters):
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        Select = {
+            'RQ' : 'CF:rq',
+            'AREA' : 'CF:area',
+            'NAME' : 'CF:name',
+            'PAGE' : 'CF:page',
+            'TITLE' : 'CF:title',
+            'CHANNEL' : 'CF:channel',
+            'DATE' : 'CF:date',
+            'WEEKDAY' : 'CF:weekday',
+            'START' : 'CF:start',
+            'LENGTH' : 'CF:length',
+            'END' : 'CF:end',
+            'TOPIC' : 'CF:topic',
+            'REPLAY' : 'CF:replay',
+            'SERIALNO' : 'CF:serialno',
+        }
+        Groupby =  None
+        Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
+        return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
+    def AreaReport(self, paramters):
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        Select = {
+            'AREA' : 'CF:area',
+            'COUNT' : COUNT('CF:area'),
+            'SUM' : SUM('CF:length'),
+            'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')),
+            'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')),
+            'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
+        }
+        Groupby =  [ 'CF:area',]
+        Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
+        return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
+    def RenqunReport(self, paramters):
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        Select = {
+            'RQ' : 'CF:rq',
+            'COUNT' : COUNT('CF:area'),
+            'SUM' : SUM('CF:length'),
+            'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')),
+            'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')),
+            'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
+        }
+        Groupby =  ['CF:rq',]
+        Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
+        return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def Process(self, input):
-        try: return json.dumps([i.d for i in list(self._parse(json.loads(input)))])
+        try:
+            input = json.loads(input)
+            type, version, parameters = input['type'], input['version'], input['parameters']
+            f = self.function[type]
+            try:
+                output = f(dict([(i, input['parameters'][i]) for i in input['parameters'] if i[0] != '_']))
+                # cache, sort, page here
+                result = output
+                currentPage = 1
+                # post-processing complete, output
+                currentPage, currentSize, totalSize = currentPage, len(result), len(output)
+                return json.dumps({'ReturnCode':0, 'ReturnMessage': 'OK', 'Result' : {'currentPage' : currentPage, 'currentSize' : currentSize, 'totalSize' : totalSize, 'data' : result}})
+            except Exception, e:
+                print traceback.format_exc()
+                return json.dumps({'ReturnCode':200, 'ReturnMessage':str(e)})
         except Exception, e:
             print traceback.format_exc()
-            return json.dumps({'ReturnCode':100, 'ReturnMessage':str(e)})
+            return json.dumps({'ReturnCode':100, 'ReturnMessage':'input format error (%s)'%(str(e))})
 if __name__ == '__main__': Main(DEFAULT_HOST if len(sys.argv) <= 1 else sys.argv[1], DEFAULT_PORT if len(sys.argv) <= 2 else sys.argv[2])

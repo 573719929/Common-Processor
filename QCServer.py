@@ -15,7 +15,7 @@ def ConditionToFilter(condition):
     ef = []
     for field in condition:
         if field == 'timeslot': ef.append(OR(AND(GT('CF', 'start', condition['timeslot'][0]), LT('CF', 'start', condition['timeslot'][1])), AND(GT('CF', 'end', condition['timeslot'][0]), LT('CF', 'end', condition['timeslot'][1]))))
-        elif field == 'dayslot': ef.append(AND(GT('CF', 'day', condition['dayslot'][0]), LT('CF', 'day', condition['dayslot'][1])))
+        elif field == 'dayslot': ef.append(AND(GT('CF', 'date', condition['dayslot'][0]), LT('CF', 'date', condition['dayslot'][1])))
         elif field == 'subject': pass
         elif isinstance(condition[field], list) or isinstance(condition[field], tuple): ef.append(OR(*[EQ('CF', field, i) for i in condition[field]]))
         else: ef.append(EQ('CF', field, str(condition[field])))
@@ -66,16 +66,18 @@ class HBaseReader(DataGrid):
         transport = TTransport.TBufferedTransport(TSocket.TSocket(self.Host, self.Port))
         client = Hbase.Client(TBinaryProtocol.TBinaryProtocol(transport))
         transport.open()
-        scan = TScan(filterString = str(self.Filter) if self.Filter != None else None)
-        id = client.scannerOpenWithScan(self.Table, scan, None)
+        id = client.scannerOpenWithScan(self.Table, TScan(filterString = str(self.Filter) if self.Filter != None else None), None)
         result = client.scannerGet(id)
         while result:
             yield Record(dict([(q, result[0].columns[q].value) for q in result[0].columns]))
             result = client.scannerGet(id)
-        raise StopIteration
+        transport.close()
 def FLOAT(f):
     try: return float(f)
     except: return 0.0
+def INT(f):
+    try: return int(f)
+    except: return 0
 class Unpackage(DataGrid):
     def __init__(self, Groupby, separator, data): self.f, self.sep, self.data = list(Groupby), separator, data
     def __del__(self): del self.f, self.sep, self.data
@@ -94,6 +96,18 @@ class Field(Operator):
     def __init__(self, field): self.field, self.data = field, None
     def emit(self, record): self.data = record.v(self.field)
     def Clone(self): return Field(self.field)
+class TOINT(Operator):
+    def __init__(self, field): self.field, self.data = field, None
+    def emit(self, record): self.data = INT(record.v(self.field))
+    def Clone(self): return TOINT(self.field)
+class TOSTRING(Operator):
+    def __init__(self, field): self.field, self.data = field, None
+    def emit(self, record): self.data = str(record.v(self.field))
+    def Clone(self): return TOSTRING(self.field)
+class TOFLOAT(Operator):
+    def __init__(self, field): self.field, self.data = field, None
+    def emit(self, record): self.data = FLOAT(record.v(self.field))
+    def Clone(self): return TOFLOAT(self.field)
 class SUM(Operator):
     def __init__(self, node): self.node, self.data = Field(node) if isinstance(node, str) else node, 0
     def emit(self, record):
@@ -140,6 +154,21 @@ class NUMBER(Operator):
     def __init__(self, value): self.value = FLOAT(value)
     def GetResult(self): return self.value
     def Clone(self): return NUMBER(self.value)
+class Comparer:
+    def __init__(self, sortby): self.key = [i for i in [i.split(':') for i in sortby]]
+    def c(self, index, x, y):
+        field, dest, movetop = self.key[index]
+        if x[field] == y[field]: return 0
+        if x[field] == movetop: return -1
+        if y[field] == movetop: return 1
+        return cmp(x[field], y[field]) if dest == 'AZ' else cmp(y[field], x[field])
+    def cmp(self, x, y):
+        index, LEN = 0, len(self.key)
+        while index < LEN:
+            t = self.c(index, x, y)
+            if t != 0: return t
+            index += 1
+        return 0
 class DIV(Operator):
     def __init__(self, node1, node2): self.nodes, self.data = [Field(node1) if isinstance(node1, str) else node1, Field(node2) if isinstance(node2, str) else node2], 0
     def emit(self, record): map(lambda x: x.emit(record), self.nodes)
@@ -170,103 +199,67 @@ class Worker:
                 if not Where.bool(record): continue
                 re = Record(dict([(s, S[s].GetValue(record)) for s in S]))
                 if Having.bool(re): yield re
-        raise StopIteration
     def DayReport(self, parameters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(parameters))
-        Select = {
-            'DATE' : 'CF:date',
-            'COUNT' : COUNT('CF:area'),
-            'SUM' : SUM('CF:length'),
-            'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')),
-            'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')),
-            'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
-        }
-        Groupby =  ['CF:date',]
-        Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(parameters))
+        Select = {'DATE' : 'CF:date', 'COUNT' : COUNT('CF:area'), 'SUM' : SUM('CF:length'), 
+        'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')), 
+        'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')), 
+        'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),}
+        Groupby, Sortby, Skip, Limit, Where, Having = ['CF:date',], [], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def Detail(self, paramters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
         Select = {
-            'RQ' : 'CF:rq',
-            'AREA' : 'CF:area',
-            'NAME' : 'CF:name',
-            'PAGE' : 'CF:page',
-            'TITLE' : 'CF:title',
-            'CHANNEL' : 'CF:channel',
-            'DATE' : 'CF:date',
-            'WEEKDAY' : 'CF:weekday',
-            'START' : 'CF:start',
-            'LENGTH' : 'CF:length',
-            'END' : 'CF:end',
-            'TOPIC' : 'CF:topic',
-            'REPLAY' : 'CF:replay',
-            'RATE' : 'CF:rate',
-            'RATE000' : 'CF:rate000',
-            'MARKET' : 'CF:market',
-            'SERIALNO' : 'CF:serialno',
-        }
+            'RQ' : 'CF:rq', 'AREA' : 'CF:area', 'NAME' : 'CF:name',
+            'PAGE' : TOINT('CF:page'),
+            'TITLE' : 'CF:title', 'CHANNEL' : 'CF:channel', 'DATE' : 'CF:date', 'WEEKDAY' : 'CF:weekday', 'START' : 'CF:start',
+            'LENGTH' : TOINT('CF:length'),
+            'END' : 'CF:end', 'TOPIC' : 'CF:topic', 'REPLAY' : 'CF:replay',
+            'RATE' : TOFLOAT('CF:rate'), 'RATE000' : TOFLOAT('CF:rate000'), 'MARKET' : TOFLOAT('CF:market'),
+            'SERIALNO' : 'CF:serialno', }
         Groupby =  None
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def Summary(self, paramters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
         Select = {
-            'RQ' : 'CF:rq',
-            'AREA' : 'CF:area',
-            'NAME' : 'CF:name',
-            'PAGE' : 'CF:page',
-            'TITLE' : 'CF:title',
-            'CHANNEL' : 'CF:channel',
-            'DATE' : 'CF:date',
-            'WEEKDAY' : 'CF:weekday',
-            'START' : 'CF:start',
-            'LENGTH' : 'CF:length',
-            'END' : 'CF:end',
-            'TOPIC' : 'CF:topic',
-            'REPLAY' : 'CF:replay',
-            'SERIALNO' : 'CF:serialno',
+            'RQ' : 'CF:rq', 'AREA' : 'CF:area', 'NAME' : 'CF:name', 'PAGE' : 'CF:page', 'TITLE' : 'CF:title',
+            'CHANNEL' : 'CF:channel', 'DATE' : 'CF:date', 'WEEKDAY' : 'CF:weekday', 'START' : 'CF:start',
+            'LENGTH' : 'CF:length', 'END' : 'CF:end', 'TOPIC' : 'CF:topic', 'REPLAY' : 'CF:replay', 'SERIALNO' : 'CF:serialno',
         }
         Groupby =  None
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def AreaReport(self, paramters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
         Select = {
-            'AREA' : 'CF:area',
-            'COUNT' : COUNT('CF:area'),
-            'SUM' : SUM('CF:length'),
-            'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')),
-            'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')),
-            'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
+            'AREA' : 'CF:area', 'COUNT' : COUNT('CF:area'), 'SUM' : SUM('CF:length'),
+            'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')), 'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')), 'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
         }
-        Groupby =  [ 'CF:area',]
+        Groupby =  [ 'CF:area', ]
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def RenqunReport(self, paramters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.ALL', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
         Select = {
-            'RQ' : 'CF:rq',
-            'COUNT' : COUNT('CF:area'),
-            'SUM' : SUM('CF:length'),
-            'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')),
-            'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')),
-            'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
+            'RQ' : 'CF:rq', 'COUNT' : COUNT('CF:area'), 'SUM' : SUM('CF:length'),
+            'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')), 'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')), 'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
         }
         Groupby =  ['CF:rq',]
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
+    def CacheValid(self): return False
     def Process(self, input):
         try:
             input = json.loads(input)
             type, version, parameters = input['type'], input['version'], input['parameters']
             f = self.function[type]
             try:
-                output = f(dict([(i, input['parameters'][i]) for i in input['parameters'] if i[0] != '_']))
-                # cache, sort, page here
-                result = output
-                currentPage = 1
-                # post-processing complete, output
-                currentPage, currentSize, totalSize = currentPage, len(result), len(output)
+                if self.CacheValid(): pass # cache
+                else: output = f(dict([(i, input['parameters'][i]) for i in input['parameters'] if i[0] != '_'])) # calculate
+                output = sorted(output, cmp = Comparer(input['parameters']["_sortby"]).cmp) # sort
+                result = output[input['parameters']['_pageSize']*(input['parameters']['_pageNumber']-1):input['parameters']['_pageNumber']*input['parameters']['_pageSize']] # page
+                currentPage, currentSize, totalSize = input['parameters']['_pageNumber'], len(result), len(output)
                 return json.dumps({'ReturnCode':0, 'ReturnMessage': 'OK', 'Result' : {'currentPage' : currentPage, 'currentSize' : currentSize, 'totalSize' : totalSize, 'data' : result}})
             except Exception, e:
                 print traceback.format_exc()

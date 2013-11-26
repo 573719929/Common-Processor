@@ -196,6 +196,7 @@ class Worker:
             'Detail' : lambda x: self.Detail(x),
             'Summary' : lambda x: self.Summary(x),
         }
+        self.ReadFromCache, self.WriteToCache = False, False
     def GROUP(self, Select = {}, From = None, Where = Boolean(), Groupby = [], Having = Boolean(), Sortby = [], Skip = 0, Limit = 10):
         data = {}
         if From != None and Groupby != None:
@@ -262,6 +263,7 @@ class Worker:
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def CacheValid(self, cachekey):
+        if not self.ReadFromCache: return False
         m = pymongo.MongoClient("192.168.1.15", 33458)
         col = m["CACHE"]["registeration_"]
         return len(list(col.find({"_id":cachekey}))) == 1
@@ -274,16 +276,12 @@ class Worker:
             f = self.function[type]
             try:
                 cachekey = '%s__%s__%s'%(input['type'], input['version'], '.'.join(['%s_%s'%(k, str(input['parameters'][k])) for k in input['parameters'] if k[0] != "_"]))
-                #print 'cachekey =', cachekey
-                if self.CacheValid(cachekey):
-                    #print 'Reading from cache...'
-                    output = self.ReadCache(cachekey) # cache
+                if self.CacheValid(cachekey): output = self.ReadCache(cachekey) # read from cache
                 else:
-                    #print 'Cache is not valid...'
                     output = f(dict([(i, input['parameters'][i]) for i in input['parameters'] if i[0] != '_'])) # calculate
-                    MongoDBWriter("192.168.1.15", 33458, "CACHE").write(cachekey, output, True)
-                    MongoDBWriter("192.168.1.15", 33458, "CACHE").write("registeration_", [{"_id":cachekey, "timestamp":time.time(), "datetime":time.ctime()}], False)
-                #print output
+                    if self.WriteToCache:
+                        MongoDBWriter("192.168.1.15", 33458, "CACHE").write(cachekey, output, True)
+                        MongoDBWriter("192.168.1.15", 33458, "CACHE").write("registeration_", [{"_id":cachekey, "timestamp":time.time(), "datetime":time.ctime()}], False)
                 output = sorted(output, cmp = Comparer(input['parameters']["_sortby"]).cmp) # sort
                 result = output[input['parameters']['_pageSize']*(input['parameters']['_pageNumber']-1):input['parameters']['_pageNumber']*input['parameters']['_pageSize']] # page
                 currentPage, currentSize, totalSize = input['parameters']['_pageNumber'], len(result), len(output)

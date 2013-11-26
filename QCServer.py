@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #-*- coding:utf-8 -*-
 DEFAULT_HOST, DEFAULT_PORT = None, 7729
-import sys, json, random, traceback
+import sys, json, random, traceback, pymongo, time
 sys.path.append('./gen-py')
 from DataAccess import QueryProcessorService
 from thrift.transport import TSocket, TTransport
@@ -72,6 +72,19 @@ class HBaseReader(DataGrid):
             yield Record(dict([(q, result[0].columns[q].value) for q in result[0].columns]))
             result = client.scannerGet(id)
         transport.close()
+class MongoDBWriter(DataGrid):
+    def __init__(self, host, port, db): self.m, self.db = pymongo.MongoClient(host, port), db
+    def write(self, collection, data, auto):
+        col = self.m[self.db][collection]
+        if auto: col.remove()
+        for d in data: col.insert(dict(d))
+class MongoDBReader(DataGrid):
+    def __init__(self, host, port, db, collection): self.m, self.db, self.collection = pymongo.MongoClient(host, port), db, collection
+    def next(self):
+        col = self.m[self.db][self.collection]
+        for d in col.find():
+            del d["_id"]
+            yield Record(dict(d))
 def FLOAT(f):
     try: return float(f)
     except: return 0.0
@@ -248,15 +261,29 @@ class Worker:
         Groupby =  ['CF:rq',]
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
-    def CacheValid(self): return False
+    def CacheValid(self, cachekey):
+        m = pymongo.MongoClient("192.168.1.15", 33458)
+        col = m["CACHE"]["registeration_"]
+        return len(list(col.find({"_id":cachekey}))) == 1
+    def ReadCache(self, cachekey):
+        return list(MongoDBReader("192.168.1.15", 33458, "CACHE", cachekey))
     def Process(self, input):
         try:
             input = json.loads(input)
             type, version, parameters = input['type'], input['version'], input['parameters']
             f = self.function[type]
             try:
-                if self.CacheValid(): pass # cache
-                else: output = f(dict([(i, input['parameters'][i]) for i in input['parameters'] if i[0] != '_'])) # calculate
+                cachekey = '%s__%s__%s'%(input['type'], input['version'], '.'.join(['%s_%s'%(k, str(input['parameters'][k])) for k in input['parameters'] if k[0] != "_"]))
+                #print 'cachekey =', cachekey
+                if self.CacheValid(cachekey):
+                    #print 'Reading from cache...'
+                    output = self.ReadCache(cachekey) # cache
+                else:
+                    #print 'Cache is not valid...'
+                    output = f(dict([(i, input['parameters'][i]) for i in input['parameters'] if i[0] != '_'])) # calculate
+                    MongoDBWriter("192.168.1.15", 33458, "CACHE").write(cachekey, output, True)
+                    MongoDBWriter("192.168.1.15", 33458, "CACHE").write("registeration_", [{"_id":cachekey, "timestamp":time.time(), "datetime":time.ctime()}], False)
+                #print output
                 output = sorted(output, cmp = Comparer(input['parameters']["_sortby"]).cmp) # sort
                 result = output[input['parameters']['_pageSize']*(input['parameters']['_pageNumber']-1):input['parameters']['_pageNumber']*input['parameters']['_pageSize']] # page
                 currentPage, currentSize, totalSize = input['parameters']['_pageNumber'], len(result), len(output)

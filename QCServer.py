@@ -197,6 +197,8 @@ class Worker:
             'Summary' : lambda x: self.Summary(x),
         }
         self.ReadFromCache, self.WriteToCache = False, False
+        self.MongoHost, self.MongoPort = "192.168.1.15", 33458
+        self.HBaseHost, self.HBasePort = "localhost", 9090
     def GROUP(self, Select = {}, From = None, Where = Boolean(), Groupby = [], Having = Boolean(), Sortby = [], Skip = 0, Limit = 10):
         data = {}
         if From != None and Groupby != None:
@@ -214,7 +216,7 @@ class Worker:
                 re = Record(dict([(s, S[s].GetValue(record)) for s in S]))
                 if Having.bool(re): yield re
     def DayReport(self, parameters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(parameters))
+        From = HBaseReader(Host = self.HBaseHost, Port = self.HBasePort, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(parameters))
         Select = {'DATE' : 'CF:date', 'COUNT' : COUNT('CF:area'), 'SUM' : SUM('CF:length'), 
         'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')), 
         'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')), 
@@ -222,7 +224,7 @@ class Worker:
         Groupby, Sortby, Skip, Limit, Where, Having = ['CF:date',], [], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def Detail(self, paramters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        From = HBaseReader(Host = self.HBaseHost, Port = self.HBasePort, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
         Select = {
             'RQ' : 'CF:rq', 'AREA' : 'CF:area', 'NAME' : 'CF:name',
             'PAGE' : TOINT('CF:page'),
@@ -235,7 +237,7 @@ class Worker:
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def Summary(self, paramters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        From = HBaseReader(Host = self.HBaseHost, Port = self.HBasePort, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
         Select = {
             'RQ' : 'CF:rq', 'AREA' : 'CF:area', 'NAME' : 'CF:name', 'PAGE' : 'CF:page', 'TITLE' : 'CF:title',
             'CHANNEL' : 'CF:channel', 'DATE' : 'CF:date', 'WEEKDAY' : 'CF:weekday', 'START' : 'CF:start',
@@ -245,7 +247,7 @@ class Worker:
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def AreaReport(self, paramters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        From = HBaseReader(Host = self.HBaseHost, Port = self.HBasePort, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
         Select = {
             'AREA' : 'CF:area', 'COUNT' : COUNT('CF:area'), 'SUM' : SUM('CF:length'),
             'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')), 'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')), 'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
@@ -254,7 +256,7 @@ class Worker:
         Sortby, Skip, Limit, Where, Having =[], 0, 10, Boolean(), Boolean()
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def RenqunReport(self, paramters):
-        From = HBaseReader(Host = "localhost", Port = 9090, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
+        From = HBaseReader(Host = self.HBaseHost, Port = self.HBasePort, Table = 'dc.CITY.COL.PLAY.4', RowKeyPattern = None, Filter = ConditionToFilter(paramters))
         Select = {
             'RQ' : 'CF:rq', 'COUNT' : COUNT('CF:area'), 'SUM' : SUM('CF:length'),
             'RATE' : DIV(SUM(MUL('CF:rate', 'CF:length')), SUM('CF:length')), 'RATE000' : DIV(SUM(MUL('CF:rate000', 'CF:length')), SUM('CF:length')), 'MARKET' : DIV(SUM(MUL('CF:market', 'CF:length')), SUM('CF:length')),
@@ -264,11 +266,11 @@ class Worker:
         return list(self.GROUP(Select, From, Where, Groupby, Having, Sortby, Skip, Limit))
     def CacheValid(self, cachekey):
         if not self.ReadFromCache: return False
-        m = pymongo.MongoClient("192.168.1.15", 33458)
+        m = pymongo.MongoClient(self.MongoHost, self.MongoPort)
         col = m["CACHE"]["registeration_"]
         return len(list(col.find({"_id":cachekey}))) == 1
     def ReadCache(self, cachekey):
-        return list(MongoDBReader("192.168.1.15", 33458, "CACHE", cachekey))
+        return list(MongoDBReader(self.MongoHost, self.MongoPort, "CACHE", cachekey))
     def Process(self, input):
         try:
             input = json.loads(input)
@@ -280,8 +282,8 @@ class Worker:
                 else:
                     output = f(dict([(i, input['parameters'][i]) for i in input['parameters'] if i[0] != '_'])) # calculate
                     if self.WriteToCache:
-                        MongoDBWriter("192.168.1.15", 33458, "CACHE").write(cachekey, output, True)
-                        MongoDBWriter("192.168.1.15", 33458, "CACHE").write("registeration_", [{"_id":cachekey, "timestamp":time.time(), "datetime":time.ctime()}], False)
+                        MongoDBWriter(self.MongoHost, self.MongoPort, "CACHE").write(cachekey, output, True)
+                        MongoDBWriter(self.MongoHost, self.MongoPort, "CACHE").write("registeration_", [{"_id":cachekey, "timestamp":time.time(), "datetime":time.ctime()}], False)
                 output = sorted(output, cmp = Comparer(input['parameters']["_sortby"]).cmp) # sort
                 result = output[input['parameters']['_pageSize']*(input['parameters']['_pageNumber']-1):input['parameters']['_pageNumber']*input['parameters']['_pageSize']] # page
                 currentPage, currentSize, totalSize = input['parameters']['_pageNumber'], len(result), len(output)
